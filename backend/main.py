@@ -1,14 +1,22 @@
+"""
+DMaaST WP3.3 Digital Twin Simulation API
+Supports PCB+KAM and JPB value chain topologies
+"""
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional, Any
-import simpy
-import random
-from datetime import datetime
-from simulation_engine import ProductionLineSimulation
-from analysis_engine import analyze_simulation_results
 
-app = FastAPI(title="Digital Twin Simulation API", version="1.0.0")
+from analysis_engine import analyze_simulation_results
+from simulation_engine import ValueChainSimulation
+
+app = FastAPI(
+    title="DMaaST Value Chain Digital Twin API",
+    version="2.0.0",
+    description="Graph-based simulation for PCB+KAM and JPB value chains"
+)
 
 # CORS middleware for React frontend
 app.add_middleware(
@@ -21,107 +29,111 @@ app.add_middleware(
 
 
 class SimulationParameters(BaseModel):
-    # Genel Fabrika Altyapısı - Workstation bazlı
-    workstation_configs: Dict[str, Dict[str, Any]] = Field(
-        default={
-            "workstation_1": {"count": 2, "processing_time": 10.0, "mtbf": 120.0, "mttr": 15.0},
-            "workstation_2": {"count": 1, "processing_time": 5.0, "mtbf": 200.0, "mttr": 10.0}
-        },
-        description="Workstation konfigürasyonları: {workstation_id: {count, processing_time, mtbf, mttr}}"
+    topology_type: Literal["pcb_kam", "jpb"] = Field(
+        default="pcb_kam",
+        description="Workflow topology: 'pcb_kam' for PCB+KAM or 'jpb' for JPB"
     )
-    storage_capacities: Dict[str, int] = Field(
-        default={"storage_1": 20, "storage_2": 20},
-        description="Depolama alanı kapasiteleri"
+    node_overrides: Optional[Dict[str, Dict[str, Any]]] = Field(
+        default=None,
+        description="Optional overrides for specific nodes: {node_id: {processing_time, capacity, mtbf, mttr}}"
     )
-    arrival_rates: float = Field(
+    arrival_rate: float = Field(
         default=0.1,
-        description="Hammadde geliş hızı (parça/dakika)"
+        description="Material arrival rate (parts/minute)"
     )
     simulation_duration: float = Field(
         default=480.0,
-        description="Simülasyon süresi (dakika)"
-    )
-    # Geriye dönük uyumluluk için eski parametreler (opsiyonel)
-    machine_counts: Optional[Dict[str, int]] = Field(
-        default=None,
-        description="[Deprecated] machine_counts yerine workstation_configs kullanın"
-    )
-    mean_processing_times: Optional[Dict[str, float]] = Field(
-        default=None,
-        description="[Deprecated] workstation_configs içinde tanımlayın"
-    )
-    buffer_capacities: Optional[Dict[str, int]] = Field(
-        default=None,
-        description="[Deprecated] storage_capacities kullanın"
-    )
-    mtbf: Optional[Dict[str, float]] = Field(
-        default=None,
-        description="[Deprecated] workstation_configs içinde tanımlayın"
-    )
-    mttr: Optional[Dict[str, float]] = Field(
-        default=None,
-        description="[Deprecated] workstation_configs içinde tanımlayın"
+        description="Simulation duration (minutes)"
     )
 
 
 class SimulationResponse(BaseModel):
-    metrics: Dict[str, Any]  # Changed from Dict[str, float] to allow resource_utilization dict
+    metrics: Dict[str, Any]
     time_series: List[Dict[str, Any]]
     node_status: Dict[str, Dict[str, Any]]
-    insights: List[Dict[str, Any]]  # Kural tabanlı analiz sonuçları
+    topology: Dict[str, Any]
+    insights: List[Dict[str, Any]]
     simulation_id: str
     timestamp: str
 
 
 @app.get("/")
 async def root():
-    return {"message": "Digital Twin Simulation API", "version": "1.0.0"}
+    return {
+        "message": "DMaaST Value Chain Digital Twin API",
+        "version": "2.0.0",
+        "topologies": ["pcb_kam", "jpb"]
+    }
+
+
+@app.get("/topologies")
+async def get_topologies():
+    """Return available topology configurations."""
+    return {
+        "pcb_kam": {
+            "name": "PCB + KAM Workflow",
+            "description": "PCB production and Warehouse Manufacturing flow",
+            "nodes": [
+                "suppliers", "ext_logistics_s2w", "pcb_sqa", "pcb_warehouse",
+                "int_log_w2pcb", "pcb_production", "int_log_pcb2wm", "wm_sqa",
+                "wm_warehouse", "int_log_w2wm", "wm_production", "ext_logistics_out", "customers"
+            ],
+        },
+        "jpb": {
+            "name": "JPB Workflow",
+            "description": "JPB assembly with spring and raw material supply lines",
+            "nodes": [
+                "spring_supplier", "rm_supplier_1", "rm_supplier_2", "ext_log_s2w",
+                "ext_log_s12w", "ext_log_s22w", "spring_inventory", "lh_building_inv",
+                "int_log_w2w", "material_inventory", "int_log_w2jpb_spring",
+                "int_log_w2jpb_mat", "jpb_production", "int_log_jpb2qa", "qa",
+                "int_log_qa2w", "ext_log_sale", "customers"
+            ],
+        }
+    }
 
 
 @app.post("/simulate", response_model=SimulationResponse)
 async def simulate(parameters: SimulationParameters):
     """
-    Run a discrete event simulation of the production line.
-    Returns metrics, time series data, and node status information.
+    Run a discrete event simulation of the value chain.
+    Returns metrics, time series data, node status, and topology information.
     """
     try:
         # Create simulation instance
-        sim = ProductionLineSimulation(
-            machine_counts=parameters.machine_counts,
-            mean_processing_times=parameters.mean_processing_times,
-            arrival_rate=parameters.arrival_rates,
+        sim = ValueChainSimulation(
+            topology_type=parameters.topology_type,
+            node_overrides=parameters.node_overrides,
+            arrival_rate=parameters.arrival_rate,
             simulation_duration=parameters.simulation_duration,
-            buffer_capacities=parameters.buffer_capacities,
-            mtbf=parameters.mtbf,
-            mttr=parameters.mttr,
         )
-        
+
         # Run simulation
         results = sim.run()
-        
+
         # Analyze results with rule-based engine
         insights = analyze_simulation_results(results)
-        
+
         # Generate simulation ID
-        sim_id = f"sim_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
+        sim_id = f"sim_{parameters.topology_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
         return SimulationResponse(
             metrics=results["metrics"],
             time_series=results["time_series"],
             node_status=results["node_status"],
+            topology=results["topology"],
             insights=insights,
             simulation_id=sim_id,
             timestamp=datetime.now().isoformat()
         )
-    
+
     except Exception as e:
         import traceback
         error_detail = f"Simulation error: {str(e)}\n{traceback.format_exc()}"
-        print(f"ERROR: {error_detail}")  # Log to console
+        print(f"ERROR: {error_detail}")
         raise HTTPException(status_code=500, detail=f"Simulation error: {str(e)}")
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
-
+    return {"status": "healthy", "version": "2.0.0"}

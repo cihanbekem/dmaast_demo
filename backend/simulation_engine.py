@@ -1,406 +1,473 @@
-import simpy
+"""
+Graph-based Value Chain Simulation Engine for DMaaST WP3.3
+Supports: PCB_KAM_FLOW and JPB_FLOW topologies
+"""
 import random
-from typing import Dict, List, Any, Optional
 from collections import defaultdict
-import math
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+import simpy
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TOPOLOGY DEFINITIONS - Exact Mermaid diagrams from DMaaST
+# ═══════════════════════════════════════════════════════════════════════════════
+
+PCB_KAM_NODES = [
+    "suppliers",
+    "ext_logistics_s2w",
+    "pcb_sqa",
+    "pcb_warehouse",
+    "int_log_w2pcb",
+    "pcb_production",
+    "int_log_pcb2wm",
+    "wm_sqa",
+    "wm_warehouse",
+    "int_log_w2wm",
+    "wm_production",
+    "ext_logistics_out",
+    "customers",
+]
+
+PCB_KAM_EDGES = [
+    # Main entry
+    ("suppliers", "ext_logistics_s2w"),
+    # Path 1: PCB line
+    ("ext_logistics_s2w", "pcb_sqa"),
+    ("pcb_sqa", "pcb_warehouse"),
+    ("pcb_warehouse", "int_log_w2pcb"),
+    ("int_log_w2pcb", "pcb_production"),
+    ("pcb_production", "int_log_pcb2wm"),
+    ("int_log_pcb2wm", "wm_warehouse"),
+    # Path 2: Direct to WM
+    ("ext_logistics_s2w", "wm_sqa"),
+    ("wm_sqa", "wm_warehouse"),
+    # Final path
+    ("wm_warehouse", "int_log_w2wm"),
+    ("int_log_w2wm", "wm_production"),
+    ("wm_production", "ext_logistics_out"),
+    ("ext_logistics_out", "customers"),
+]
+
+JPB_NODES = [
+    "spring_supplier",
+    "rm_supplier_1",
+    "rm_supplier_2",
+    "ext_log_s2w",
+    "ext_log_s12w",
+    "ext_log_s22w",
+    "spring_inventory",
+    "lh_building_inv",
+    "int_log_w2w",
+    "material_inventory",
+    "int_log_w2jpb_spring",
+    "int_log_w2jpb_mat",
+    "jpb_production",
+    "int_log_jpb2qa",
+    "qa",
+    "int_log_qa2w",
+    "ext_log_sale",
+    "customers",
+]
+
+JPB_EDGES = [
+    # Spring line
+    ("spring_supplier", "ext_log_s2w"),
+    ("ext_log_s2w", "spring_inventory"),
+    ("spring_inventory", "int_log_w2jpb_spring"),
+    ("int_log_w2jpb_spring", "jpb_production"),
+    # Raw material line 1
+    ("rm_supplier_1", "ext_log_s12w"),
+    ("ext_log_s12w", "lh_building_inv"),
+    # Raw material line 2
+    ("rm_supplier_2", "ext_log_s22w"),
+    ("ext_log_s22w", "lh_building_inv"),
+    # Internal flow
+    ("lh_building_inv", "int_log_w2w"),
+    ("int_log_w2w", "material_inventory"),
+    ("material_inventory", "int_log_w2jpb_mat"),
+    ("int_log_w2jpb_mat", "jpb_production"),
+    # Output
+    ("jpb_production", "int_log_jpb2qa"),
+    ("int_log_jpb2qa", "qa"),
+    # Sales
+    ("qa", "ext_log_sale"),
+    ("material_inventory", "ext_log_sale"),
+    ("ext_log_sale", "customers"),
+    # Feedback loop (QA rejection)
+    ("qa", "int_log_qa2w"),
+    ("int_log_qa2w", "material_inventory"),
+]
 
 
-class Machine:
-    """Represents a machine with breakdown and repair capabilities."""
-    
-    def __init__(self, env: simpy.Environment, machine_id: str, 
-                 processing_time: float, mtbf: float, mttr: float):
+TOPOLOGY_CONFIGS = {
+    "pcb_kam": {
+        "nodes": PCB_KAM_NODES,
+        "edges": PCB_KAM_EDGES,
+        "sources": ["suppliers"],
+        "sinks": ["customers"],
+        "split_nodes": {
+            "ext_logistics_s2w": [("pcb_sqa", 0.7), ("wm_sqa", 0.3)],  # 70% PCB, 30% direct
+        },
+        "merge_nodes": ["wm_warehouse"],
+    },
+    "jpb": {
+        "nodes": JPB_NODES,
+        "edges": JPB_EDGES,
+        "sources": ["spring_supplier", "rm_supplier_1", "rm_supplier_2"],
+        "sinks": ["customers"],
+        "split_nodes": {
+            "qa": [("ext_log_sale", 0.9), ("int_log_qa2w", 0.1)],  # 10% rejection rate
+        },
+        "merge_nodes": ["lh_building_inv", "jpb_production", "material_inventory", "ext_log_sale"],
+    },
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NODE PROCESSOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class NodeProcessor:
+    """Represents a processing node in the value chain."""
+
+    def __init__(
+        self,
+        env: simpy.Environment,
+        node_id: str,
+        processing_time: float = 10.0,
+        capacity: int = 100,
+        mtbf: float = 500.0,
+        mttr: float = 30.0,
+    ):
         self.env = env
-        self.machine_id = machine_id
+        self.node_id = node_id
         self.processing_time = processing_time
-        self.mtbf = mtbf  # Mean Time Between Failures
-        self.mttr = mttr  # Mean Time To Repair
+        self.capacity = capacity
+        self.mtbf = mtbf
+        self.mttr = mttr
+
         self.resource = simpy.Resource(env, capacity=1)
+        self.buffer = simpy.Store(env, capacity=capacity)
         self.is_broken = False
-        self.total_uptime = 0.0
         self.total_downtime = 0.0
-        self.last_failure_time = 0.0
         self.processed_count = 0
         self.utilization_time = 0.0
-        
+        self.waiting_time = 0.0
+        self.queue_history: List[Tuple[float, int]] = []
+
         # Start breakdown process
-        env.process(self._breakdown_process())
-    
+        if mtbf > 0:
+            env.process(self._breakdown_process())
+
     def _breakdown_process(self):
-        """Simulates machine breakdowns based on MTBF."""
+        """Simulates node breakdowns based on MTBF."""
         while True:
-            # Time until next failure (exponential distribution)
-            time_to_failure = random.expovariate(1.0 / self.mtbf)
+            time_to_failure = random.expovariate(1.0 / max(self.mtbf, 1.0))
             yield self.env.timeout(time_to_failure)
-            
+
             if not self.is_broken:
                 self.is_broken = True
-                self.last_failure_time = self.env.now
-                # Repair time (exponential distribution)
-                repair_time = random.expovariate(1.0 / self.mttr)
+                repair_time = random.expovariate(1.0 / max(self.mttr, 1.0))
                 yield self.env.timeout(repair_time)
                 self.is_broken = False
                 self.total_downtime += repair_time
-    
-    def process(self, part_id: str):
-        """Process a part with potential breakdown interruption."""
+
+    def process(self, part: Dict[str, Any]) -> Any:
+        """Process a part through this node."""
         start_time = self.env.now
-        
+
         with self.resource.request() as req:
             yield req
-            
-            # Check if machine is broken
-            if self.is_broken:
-                # Wait until repair is complete
-                while self.is_broken:
-                    yield self.env.timeout(1.0)
-            
-            # Actual processing (normal distribution around mean)
+
+            # Wait if broken
+            while self.is_broken:
+                yield self.env.timeout(0.5)
+
+            # Processing time with variability
             actual_time = max(0.1, random.normalvariate(
-                self.processing_time, 
+                self.processing_time,
                 self.processing_time * 0.1
             ))
-            
             yield self.env.timeout(actual_time)
-            
+
             end_time = self.env.now
-            self.utilization_time += (end_time - start_time)
+            self.utilization_time += actual_time
+            self.waiting_time += (end_time - start_time - actual_time)
             self.processed_count += 1
-    
+
+        return part
+
     def get_utilization(self, total_time: float) -> float:
-        """Calculate machine utilization percentage."""
-        if total_time == 0:
+        if total_time <= 0:
             return 0.0
-        return (self.utilization_time / total_time) * 100.0
-    
+        return min((self.utilization_time / total_time) * 100.0, 100.0)
+
     def get_availability(self, total_time: float) -> float:
-        """Calculate machine availability percentage."""
-        if total_time == 0:
-            return 0.0
+        if total_time <= 0:
+            return 100.0
         uptime = total_time - self.total_downtime
-        return (uptime / total_time) * 100.0
+        return max(0.0, (uptime / total_time) * 100.0)
+
+    def get_queue_length(self) -> int:
+        return len(self.buffer.items)
 
 
-class ProductionLineSimulation:
-    """Main simulation engine for the production line."""
-    
+# ═══════════════════════════════════════════════════════════════════════════════
+# GRAPH-BASED SIMULATION ENGINE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ValueChainSimulation:
+    """Graph-based simulation engine for DMaaST value chain digital twins."""
+
     def __init__(
         self,
-        workstation_configs: Optional[Dict[str, Dict[str, Any]]] = None,
-        storage_capacities: Optional[Dict[str, int]] = None,
+        topology_type: str = "pcb_kam",
+        node_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
         arrival_rate: float = 0.1,
         simulation_duration: float = 480.0,
-        # Geriye dönük uyumluluk için eski parametreler
+    ):
+        self.env = simpy.Environment()
+        self.topology_type = topology_type.lower()
+        self.arrival_rate = arrival_rate
+        self.simulation_duration = simulation_duration
+
+        # Get topology config
+        if self.topology_type not in TOPOLOGY_CONFIGS:
+            self.topology_type = "pcb_kam"
+
+        self.config = TOPOLOGY_CONFIGS[self.topology_type]
+        self.node_ids = self.config["nodes"]
+        self.edges = self.config["edges"]
+        self.sources = self.config["sources"]
+        self.sinks = self.config["sinks"]
+        self.split_nodes = self.config.get("split_nodes", {})
+        self.merge_nodes = self.config.get("merge_nodes", [])
+
+        # Build adjacency list
+        self.adjacency: Dict[str, List[str]] = defaultdict(list)
+        for src, dst in self.edges:
+            self.adjacency[src].append(dst)
+
+        # Create processors for each node with defaults
+        self.nodes: Dict[str, NodeProcessor] = {}
+        overrides = node_overrides or {}
+
+        for node_id in self.node_ids:
+            cfg = overrides.get(node_id, {})
+            self.nodes[node_id] = NodeProcessor(
+                self.env,
+                node_id,
+                processing_time=cfg.get("processing_time", 10.0),
+                capacity=cfg.get("capacity", 100),
+                mtbf=cfg.get("mtbf", 500.0),
+                mttr=cfg.get("mttr", 30.0),
+            )
+
+        # Statistics
+        self.parts_completed = 0
+        self.parts_started = 0
+        self.lead_times: List[float] = []
+        self.time_series_data: List[Dict[str, Any]] = []
+        self.collection_interval = 5.0
+
+        # Start processes
+        for source in self.sources:
+            self.env.process(self._material_arrival(source))
+        self.env.process(self._collect_time_series())
+
+    def _material_arrival(self, source_node: str):
+        """Generate material arrivals at a source node."""
+        part_id = 0
+        while True:
+            inter_arrival = random.expovariate(self.arrival_rate)
+            yield self.env.timeout(inter_arrival)
+
+            part_id += 1
+            self.parts_started += 1
+
+            part = {
+                "part_id": f"{source_node}_{part_id}",
+                "arrival_time": self.env.now,
+                "source": source_node,
+                "path": [source_node],
+            }
+
+            # Start flowing through the graph
+            self.env.process(self._process_part(part, source_node))
+
+    def _get_next_node(self, current_node: str) -> Optional[str]:
+        """Determine the next node based on topology and probabilistic splits."""
+        next_nodes = self.adjacency.get(current_node, [])
+
+        if not next_nodes:
+            return None
+
+        # Check if this is a split node
+        if current_node in self.split_nodes:
+            splits = self.split_nodes[current_node]
+            r = random.random()
+            cumulative = 0.0
+            for (target, prob) in splits:
+                cumulative += prob
+                if r <= cumulative:
+                    return target
+            return splits[-1][0]  # Fallback
+
+        # Default: just take the first next node (or random if multiple)
+        return random.choice(next_nodes) if len(next_nodes) > 1 else next_nodes[0]
+
+    def _process_part(self, part: Dict[str, Any], current_node: str):
+        """Process a part through the value chain graph."""
+        # Process at current node
+        processor = self.nodes[current_node]
+        yield self.env.process(processor.process(part))
+        part["path"].append(current_node)
+
+        # Check if we reached a sink
+        if current_node in self.sinks:
+            lead_time = self.env.now - part["arrival_time"]
+            self.lead_times.append(lead_time)
+            self.parts_completed += 1
+            return
+
+        # Get next node
+        next_node = self._get_next_node(current_node)
+
+        if next_node:
+            # Continue to next node
+            self.env.process(self._process_part(part, next_node))
+
+    def _collect_time_series(self):
+        """Collect time series data at regular intervals."""
+        while True:
+            yield self.env.timeout(self.collection_interval)
+
+            snapshot = {
+                "time": self.env.now,
+                "queue_lengths": {},
+                "utilizations": {},
+                "throughput": self.parts_completed / max(self.env.now, 1) * 60,
+            }
+
+            for node_id, processor in self.nodes.items():
+                snapshot["queue_lengths"][node_id] = processor.get_queue_length()
+                snapshot["utilizations"][node_id] = processor.get_utilization(self.env.now)
+
+            self.time_series_data.append(snapshot)
+
+    def run(self) -> Dict[str, Any]:
+        """Run the simulation and return results."""
+        self.env.run(until=self.simulation_duration)
+
+        total_time = max(self.simulation_duration, 0.1)
+        throughput = self.parts_completed / (total_time / 60.0)
+        avg_lead_time = sum(self.lead_times) / len(self.lead_times) if self.lead_times else 0.0
+
+        # Build node status
+        node_status: Dict[str, Any] = {}
+        resource_utilizations: Dict[str, float] = {}
+
+        for node_id, processor in self.nodes.items():
+            utilization = processor.get_utilization(total_time)
+            availability = processor.get_availability(total_time)
+            efficiency = (availability / 100.0) * (utilization / 100.0) * 100.0 if availability > 0 and utilization > 0 else 0.0
+
+            resource_utilizations[node_id] = utilization
+
+            # Determine node type for frontend
+            node_type = "logistics" if "log" in node_id else "process"
+            if node_id in self.sources:
+                node_type = "source"
+            elif node_id in self.sinks:
+                node_type = "sink"
+            elif "warehouse" in node_id or "inventory" in node_id:
+                node_type = "storage"
+            elif "sqa" in node_id or "qa" in node_id:
+                node_type = "quality"
+            elif "production" in node_id:
+                node_type = "production"
+
+            node_status[node_id] = {
+                "type": node_type,
+                "utilization": round(utilization, 2),
+                "availability": round(availability, 2),
+                "efficiency": round(efficiency, 2),
+                "processed_count": processor.processed_count,
+                "queue_length": processor.get_queue_length(),
+                "is_bottleneck": utilization > 85.0,
+                "is_broken": processor.is_broken,
+            }
+
+        metrics = {
+            "throughput": round(throughput, 2),
+            "average_lead_time": round(avg_lead_time, 2),
+            "parts_completed": self.parts_completed,
+            "parts_started": self.parts_started,
+            "resource_utilization": resource_utilizations,
+        }
+
+        time_series = [
+            {
+                "time": snap["time"],
+                "queue_lengths": snap["queue_lengths"],
+                "utilizations": snap["utilizations"],
+                "throughput": snap["throughput"],
+            }
+            for snap in self.time_series_data
+        ]
+
+        return {
+            "metrics": metrics,
+            "time_series": time_series,
+            "node_status": node_status,
+            "topology": {
+                "type": self.topology_type,
+                "nodes": self.node_ids,
+                "edges": [(src, dst) for src, dst in self.edges],
+            },
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BACKWARD COMPATIBILITY WRAPPER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ProductionLineSimulation(ValueChainSimulation):
+    """Backward compatible wrapper for old API."""
+
+    def __init__(
+        self,
+        topology_type: str = "pcb_kam",
+        node_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
+        arrival_rate: float = 0.1,
+        simulation_duration: float = 480.0,
+        # Legacy parameters (ignored)
+        factory: str = None,
+        stage_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
+        buffer_overrides: Optional[Dict[str, int]] = None,
+        arrival_rates: float = None,
+        workstation_configs: Optional[Dict[str, Dict[str, Any]]] = None,
+        storage_capacities: Optional[Dict[str, int]] = None,
         machine_counts: Optional[Dict[str, int]] = None,
         mean_processing_times: Optional[Dict[str, float]] = None,
         buffer_capacities: Optional[Dict[str, int]] = None,
         mtbf: Optional[Dict[str, float]] = None,
         mttr: Optional[Dict[str, float]] = None,
     ):
-        self.env = simpy.Environment()
-        self.arrival_rate = arrival_rate
-        self.simulation_duration = simulation_duration
-        
-        # Yeni genel yapı veya eski yapıdan dönüşüm
-        if workstation_configs:
-            # Yeni genel yapı kullanılıyor
-            self.workstation_configs = workstation_configs
-            self.storage_capacities = storage_capacities or {}
-        else:
-            # Eski yapıdan yeni yapıya dönüşüm (geriye dönük uyumluluk)
-            self.workstation_configs = {}
-            self.storage_capacities = {}
-            
-            # Eski parametreleri yeni yapıya çevir
-            if machine_counts:
-                for ws_name, count in machine_counts.items():
-                    self.workstation_configs[ws_name] = {
-                        "count": count,
-                        "processing_time": mean_processing_times.get(ws_name, 10.0) if mean_processing_times else 10.0,
-                        "mtbf": mtbf.get(ws_name, 120.0) if mtbf else 120.0,
-                        "mttr": mttr.get(ws_name, 15.0) if mttr else 15.0
-                    }
-            
-            if buffer_capacities:
-                # Eski buffer isimlerini doğrudan kullan (buffer1, buffer2)
-                # Böylece frontend'deki "Tampon 1 / Tampon 2" görünümüyle tutarlı kalır
-                for name, capacity in buffer_capacities.items():
-                    self.storage_capacities[name] = capacity
-            else:
-                # Varsayılan storage'lar
-                self.storage_capacities = {"storage_1": 20, "storage_2": 20}
+        # Map old factory names to new topology types
+        if factory:
+            if factory.upper() == "KAM":
+                topology_type = "pcb_kam"
+            elif factory.upper() == "JPB":
+                topology_type = "jpb"
 
-        # Varsayılan workstation'lar yoksa oluştur
-        if not self.workstation_configs:
-            self.workstation_configs = {
-                "workstation_1": {"count": 2, "processing_time": 10.0, "mtbf": 120.0, "mttr": 15.0},
-                "workstation_2": {"count": 1, "processing_time": 5.0, "mtbf": 200.0, "mttr": 10.0}
-            }
-        
-        if not self.storage_capacities:
-            self.storage_capacities = {"storage_1": 20, "storage_2": 20}
-        
-        # Statistics tracking
-        self.parts_completed = 0
-        self.parts_started = 0
-        self.lead_times = []
-        self.queue_lengths = defaultdict(list)  # {node_id: [(time, length), ...]}
-        self.machines: Dict[str, List[Machine]] = {}
-        self.buffers: Dict[str, simpy.Store] = {}
+        # Use arrival_rates if provided (old API name)
+        if arrival_rates is not None:
+            arrival_rate = arrival_rates
 
-        # Round-robin counters for machine selection (dinamik)
-        self.workstation_counters: Dict[str, int] = {}
-
-        # Time series data collection
-        self.time_series_data = []
-        self.collection_interval = 5.0  # Collect data every 5 minutes
-        
-        self._setup_simulation()
-    
-    def _setup_simulation(self):
-        """Initialize all simulation components - Genel fabrika altyapısı."""
-        # Create storage areas (depolama alanları)
-        for storage_id, capacity in self.storage_capacities.items():
-            self.buffers[storage_id] = simpy.Store(
-                self.env,
-                capacity=capacity
-            )
-        
-        # Create workstations (iş istasyonları)
-        # Workstation'lar sırayla işlenir: storage_1 -> workstation_1 -> storage_2 -> workstation_2 -> ...
-        storage_list = sorted(self.storage_capacities.keys())
-        
-        for ws_id, config in self.workstation_configs.items():
-            ws_machines = []
-            count = config.get("count", 1)
-            processing_time = config.get("processing_time", 10.0)
-            ws_mtbf = config.get("mtbf", 120.0)
-            ws_mttr = config.get("mttr", 15.0)
-            
-            for i in range(count):
-                # Kullanıcı dostu makine ID'leri: cnc_1, cnc_2, qc_1 vb.
-                base_name = ws_id
-                if ws_id == "quality_control":
-                    base_name = "qc"
-                machine_id = f"{base_name}_{i+1}"
-                
-                machine = Machine(
-                    self.env,
-                    machine_id,
-                    processing_time,
-                    ws_mtbf,
-                    ws_mttr
-                )
-                ws_machines.append(machine)
-            
-            self.machines[ws_id] = ws_machines
-        
-        # Round-robin counter'ları workstation'lar için hazırla
-        self.workstation_counters = {ws_id: 0 for ws_id in self.workstation_configs.keys()}
-        
-        # Start processes
-        self.env.process(self._material_arrival())
-        self.env.process(self._production_line())
-        self.env.process(self._collect_time_series())
-    
-    def _material_arrival(self):
-        """Generate material arrivals based on arrival rate."""
-        part_id = 0
-        while True:
-            # Exponential inter-arrival time
-            inter_arrival = random.expovariate(self.arrival_rate)
-            yield self.env.timeout(inter_arrival)
-
-            part_id += 1
-            self.parts_started += 1
-            
-            # İlk storage'a koy
-            storage_list = sorted(self.buffers.keys())
-            if storage_list:
-                self.buffers[storage_list[0]].put({
-                    "part_id": part_id,
-                    "arrival_time": self.env.now
-                })
-    
-    def _production_line(self):
-        """Genel fabrika üretim süreci - Dinamik workstation akışı."""
-        while True:
-            try:
-                # İlk storage'dan parça al
-                storage_list = sorted(self.buffers.keys())
-                if not storage_list:
-                    yield self.env.timeout(1.0)
-                    continue
-                
-                first_storage = storage_list[0]
-                part = yield self.buffers[first_storage].get()
-                
-                # Track queue length
-                self.queue_lengths[first_storage].append((self.env.now, len(self.buffers[first_storage].items)))
-                
-                # Workstation'ları sırayla işle
-                workstation_list = sorted(self.workstation_configs.keys())
-                
-                for i, ws_id in enumerate(workstation_list):
-                    if ws_id not in self.machines or not self.machines[ws_id]:
-                        continue
-                    
-                    # Round-robin ile makine seç
-                    available_machines = [m for m in self.machines[ws_id] if not m.is_broken]
-                    if not available_machines:
-                        yield self.env.timeout(1.0)
-                        continue
-                    
-                    counter = self.workstation_counters.get(ws_id, 0)
-                    counter = (counter + 1) % len(available_machines)
-                    self.workstation_counters[ws_id] = counter
-                    machine = available_machines[counter]
-                    
-                    # İşlemi yap
-                    yield self.env.process(machine.process(part["part_id"]))
-                    
-                    # Queue length takibi
-                    self.queue_lengths[ws_id].append((self.env.now, machine.resource.count))
-                    
-                    # Sonraki storage'a koy (varsa)
-                    if i < len(storage_list) - 1:
-                        next_storage = storage_list[i + 1]
-                        if len(self.buffers[next_storage].items) < self.buffers[next_storage].capacity:
-                            self.buffers[next_storage].put(part)
-                        else:
-                            yield self.env.process(self._wait_for_buffer_space(next_storage, part))
-                        
-                        # Son storage'dan al
-                        part = yield self.buffers[next_storage].get()
-                        self.queue_lengths[next_storage].append((self.env.now, len(self.buffers[next_storage].items)))
-                
-                # Tamamlandı
-                lead_time = self.env.now - part["arrival_time"]
-                self.lead_times.append(lead_time)
-                self.parts_completed += 1
-                    
-            except Exception as e:
-                # Log error but continue simulation
-                print(f"Error in production line: {e}")
-                continue
-    
-    def _wait_for_buffer_space(self, buffer_name: str, part: Dict):
-        """Wait until buffer has space."""
-        while len(self.buffers[buffer_name].items) >= self.buffers[buffer_name].capacity:
-            yield self.env.timeout(0.1)
-        self.buffers[buffer_name].put(part)
-    
-    def _collect_time_series(self):
-        """Collect time series data at regular intervals."""
-        while True:
-            yield self.env.timeout(self.collection_interval)
-            
-            snapshot = {
-                "time": self.env.now,
-                "queue_lengths": {},
-                "utilizations": {},
-                "throughput": self.parts_completed / max(self.env.now, 1) * 60,  # parts per hour
-            }
-            
-            # Collect queue lengths - Dinamik olarak tüm storage ve workstation'lar
-            for storage_id in self.buffers.keys():
-                snapshot["queue_lengths"][storage_id] = len(self.buffers[storage_id].items)
-            
-            for ws_id in self.machines.keys():
-                total_queue = sum(m.resource.count for m in self.machines[ws_id])
-                snapshot["queue_lengths"][ws_id] = total_queue
-            
-            # Collect utilizations
-            for machine_type, machine_list in self.machines.items():
-                for machine in machine_list:
-                    snapshot["utilizations"][machine.machine_id] = machine.get_utilization(self.env.now)
-            
-            self.time_series_data.append(snapshot)
-    
-    def run(self) -> Dict[str, Any]:
-        """Run the simulation and return results."""
-        self.env.run(until=self.simulation_duration)
-
-        # Calculate metrics
-        total_time = max(self.simulation_duration, 0.1)  # Avoid division by zero
-        throughput = self.parts_completed / (total_time / 60) if total_time > 0 else 0.0  # parts per hour
-        avg_lead_time = sum(self.lead_times) / len(self.lead_times) if self.lead_times else 0.0
-        
-        # Calculate resource utilizations
-        resource_utilizations = {}
-        for machine_type, machine_list in self.machines.items():
-            for machine in machine_list:
-                resource_utilizations[machine.machine_id] = machine.get_utilization(total_time)
-        
-        # Aggregate utilization by type
-        avg_utilizations = {}
-        for machine_type, machine_list in self.machines.items():
-            if machine_list:
-                avg_util = sum(m.get_utilization(total_time) for m in machine_list) / len(machine_list)
-                avg_utilizations[machine_type] = avg_util
-            else:
-                avg_utilizations[machine_type] = 0.0
-        
-        # Prepare time series data
-        time_series = []
-        for snapshot in self.time_series_data:
-            time_series.append({
-                "time": snapshot["time"],
-                "queue_lengths": snapshot["queue_lengths"],
-                "utilizations": snapshot["utilizations"],
-                "throughput": snapshot["throughput"]
-            })
-        
-        # Prepare node status - Dinamik olarak tüm storage ve workstation'lar
-        node_status = {}
-        
-        # Storage statuses (depolama alanları)
-        for storage_id, storage in self.buffers.items():
-            storage_capacity = max(storage.capacity, 1)
-            current_items = len(storage.items)
-            utilization = (current_items / storage_capacity) * 100
-            
-            node_status[storage_id] = {
-                "type": "storage",
-                "current_capacity": current_items,
-                "max_capacity": storage.capacity,
-                "utilization": utilization,
-                "is_bottleneck": utilization > 85.0
-            }
-        
-        # Workstation machine statuses (iş istasyonu makineleri)
-        for workstation_id, machine_list in self.machines.items():
-            for machine in machine_list:
-                utilization = machine.get_utilization(total_time)
-                availability = machine.get_availability(total_time)
-                
-                # Calculate efficiency safely
-                efficiency = 0.0
-                if availability > 0 and utilization > 0:
-                    efficiency = (availability / 100.0) * (utilization / 100.0) * 100
-                
-                node_status[machine.machine_id] = {
-                    "type": "machine",
-                    "workstation_id": workstation_id,  # Genel terim
-                    "utilization": utilization,
-                    "availability": availability,
-                    "efficiency": efficiency,  # OEE-like metric
-                    "processed_count": machine.processed_count,
-                    "is_bottleneck": utilization > 85.0,
-                    "is_broken": machine.is_broken
-                }
-        
-        metrics = {
-            "throughput": round(throughput, 2),
-            "average_lead_time": round(avg_lead_time, 2),
-            "parts_completed": self.parts_completed,
-            "parts_started": self.parts_started,
-            "resource_utilization": avg_utilizations
-        }
-        
-        return {
-            "metrics": metrics,
-            "time_series": time_series,
-            "node_status": node_status
-        }
-
+        super().__init__(
+            topology_type=topology_type,
+            node_overrides=node_overrides,
+            arrival_rate=arrival_rate,
+            simulation_duration=simulation_duration,
+        )

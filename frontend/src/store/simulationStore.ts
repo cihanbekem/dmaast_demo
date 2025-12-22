@@ -1,29 +1,21 @@
-import { create } from 'zustand';
 import axios from 'axios';
+import { create } from 'zustand';
+import type { Language } from '../data/translations';
+
+export type TopologyType = 'pcb_kam' | 'jpb';
+
+export interface NodeOverride {
+  processing_time?: number;
+  capacity?: number;
+  mtbf?: number;
+  mttr?: number;
+}
 
 export interface SimulationParameters {
-  machine_counts: {
-    cnc: number;
-    quality_control: number;
-  };
-  mean_processing_times: {
-    cnc: number;
-    quality_control: number;
-  };
-  arrival_rates: number;
+  topology_type: TopologyType;
+  node_overrides: Record<string, NodeOverride>;
+  arrival_rate: number;
   simulation_duration: number;
-  buffer_capacities: {
-    buffer1: number;
-    buffer2: number;
-  };
-  mtbf: {
-    cnc: number;
-    quality_control: number;
-  };
-  mttr: {
-    cnc: number;
-    quality_control: number;
-  };
 }
 
 export interface TimeSeriesData {
@@ -34,16 +26,14 @@ export interface TimeSeriesData {
 }
 
 export interface NodeStatus {
-  type: 'machine' | 'buffer';
-  machine_type?: string;
-  utilization?: number;
-  availability?: number;
-  efficiency?: number;
-  processed_count?: number;
+  type: 'source' | 'sink' | 'logistics' | 'storage' | 'quality' | 'production' | 'process';
+  utilization: number;
+  availability: number;
+  efficiency: number;
+  processed_count: number;
+  queue_length: number;
   is_bottleneck: boolean;
-  is_broken?: boolean;
-  current_capacity?: number;
-  max_capacity?: number;
+  is_broken: boolean;
 }
 
 export interface Insight {
@@ -63,58 +53,108 @@ export interface SimulationResults {
   };
   time_series: TimeSeriesData[];
   node_status: Record<string, NodeStatus>;
+  topology: {
+    type: string;
+    nodes: string[];
+    edges: [string, string][];
+  };
   insights: Insight[];
   simulation_id: string;
   timestamp: string;
 }
 
 interface SimulationState {
+  // UI State
+  language: Language;
+  selectedNode: string | null;
+  infoPanelOpen: boolean;
+
+  // Simulation State
   parameters: SimulationParameters;
   results: SimulationResults | null;
   savedScenarios: Array<{ name: string; results: SimulationResults; timestamp: string }>;
   isLoading: boolean;
   error: string | null;
+
+  // UI Actions
+  setLanguage: (lang: Language) => void;
+  setSelectedNode: (nodeId: string | null) => void;
+  toggleInfoPanel: (open?: boolean) => void;
+
+  // Simulation Actions
   setParameters: (params: Partial<SimulationParameters>) => void;
+  setTopology: (topology: TopologyType) => void;
+  updateNodeOverride: (nodeId: string, override: NodeOverride) => void;
   runSimulation: () => Promise<void>;
   saveScenario: (name: string) => void;
   clearScenarios: () => void;
 }
 
 const defaultParameters: SimulationParameters = {
-  machine_counts: {
-    cnc: 2,
-    quality_control: 1,
-  },
-  mean_processing_times: {
-    cnc: 10.0,
-    quality_control: 5.0,
-  },
-  arrival_rates: 0.1,
-  simulation_duration: 480.0,
-  buffer_capacities: {
-    buffer1: 20,
-    buffer2: 20,
-  },
-  mtbf: {
-    cnc: 120.0,
-    quality_control: 200.0,
-  },
-  mttr: {
-    cnc: 15.0,
-    quality_control: 10.0,
-  },
+  topology_type: 'pcb_kam',
+  node_overrides: {},
+  arrival_rate: 0.1,
+  simulation_duration: 480,
 };
 
 export const useSimulationStore = create<SimulationState>((set, get) => ({
+  // UI State
+  language: 'tr',
+  selectedNode: null,
+  infoPanelOpen: false,
+
+  // Simulation State
   parameters: defaultParameters,
   results: null,
   savedScenarios: [],
   isLoading: false,
   error: null,
 
+  // UI Actions
+  setLanguage: (lang) => set({ language: lang }),
+
+  setSelectedNode: (nodeId) =>
+    set({
+      selectedNode: nodeId,
+      infoPanelOpen: nodeId !== null,
+    }),
+
+  toggleInfoPanel: (open) =>
+    set((state) => ({
+      infoPanelOpen: open !== undefined ? open : !state.infoPanelOpen,
+    })),
+
+  // Simulation Actions
   setParameters: (params) =>
     set((state) => ({
       parameters: { ...state.parameters, ...params },
+    })),
+
+  setTopology: (topology) =>
+    set(() => ({
+      parameters: {
+        topology_type: topology,
+        node_overrides: {},
+        arrival_rate: 0.1,
+        simulation_duration: 480,
+      },
+      results: null,
+      selectedNode: null,
+      infoPanelOpen: false,
+    })),
+
+  updateNodeOverride: (nodeId, override) =>
+    set((state) => ({
+      parameters: {
+        ...state.parameters,
+        node_overrides: {
+          ...state.parameters.node_overrides,
+          [nodeId]: {
+            ...state.parameters.node_overrides[nodeId],
+            ...override,
+          },
+        },
+      },
     })),
 
   runSimulation: async () => {
@@ -126,8 +166,11 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
       );
       set({ results: response.data, isLoading: false });
     } catch (error) {
+      const errorMessage = axios.isAxiosError(error)
+        ? error.response?.data?.detail || error.message
+        : 'Simulation failed';
       set({
-        error: error instanceof Error ? error.message : 'Simulation failed',
+        error: errorMessage,
         isLoading: false,
       });
     }
@@ -147,4 +190,3 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
 
   clearScenarios: () => set({ savedScenarios: [] }),
 }));
-
