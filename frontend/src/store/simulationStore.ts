@@ -1,5 +1,5 @@
-import axios from 'axios';
 import { create } from 'zustand';
+import api from '../lib/api';
 import type { Language } from '../data/translations';
 
 export type TopologyType = 'pcb_kam' | 'jpb';
@@ -160,15 +160,14 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
   runSimulation: async () => {
     set({ isLoading: true, error: null });
     try {
-      const response = await axios.post<SimulationResults>(
-        'http://localhost:8000/simulate',
+      const response = await api.post<SimulationResults>(
+        '/simulate',
         get().parameters
       );
       set({ results: response.data, isLoading: false });
     } catch (error) {
-      const errorMessage = axios.isAxiosError(error)
-        ? error.response?.data?.detail || error.message
-        : 'Simulation failed';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Simulation failed';
       set({
         error: errorMessage,
         isLoading: false,

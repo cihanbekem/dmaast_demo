@@ -14,7 +14,7 @@ import ReactFlow, {
   ReactFlowProvider,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { useSimulationStore, type TopologyType } from '../store/simulationStore';
+import { useSimulationStore } from '../store/simulationStore';
 import { getNodeLabel } from '../data/translations';
 import MachineNode from './nodes/MachineNode';
 import BufferNode from './nodes/BufferNode';

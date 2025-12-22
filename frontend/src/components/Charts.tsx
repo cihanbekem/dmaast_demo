@@ -36,7 +36,7 @@ const Charts: React.FC = () => {
     if (!results) return [];
 
     const machines = Object.entries(results.node_status)
-      .filter(([_, status]) => status.type === 'machine')
+      .filter(([_, status]) => ['production', 'quality', 'logistics', 'process'].includes(status.type))
       .map(([id, status]) => ({
         name: id.toUpperCase(),
         Kullanılabilirlik: status.availability || 0,
