@@ -1,0 +1,312 @@
+{
+  "021XBXXXXXXF04_v4": {
+    "total_rows": 99,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_desc",
+      "component_part_type",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": "1",
+      "parent_part": "021XBXXXXXXF04",
+      "parent_desc": "FV - MULTICAL® 21 q3 2.5 G3/4x110mm - PL",
+      "operation_no": "10",
+      "phantom_bom": "2100000800",
+      "component_part": "3024398",
+      "component_desc": "Snap ring seal Cold water",
+      "component_part_type": "Purchased (raw)",
+      "qty_per_assembly": "1",
+      "source": "Shop Order Materials - Config",
+      "basis_order": "25337187",
+      "evidence_orders": "1"
+    }
+  },
+  "021XCXXXXXX_Config1350381": {
+    "total_rows": 105,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_part_type",
+      "component_desc",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": 1,
+      "parent_part": "021XCXXXXXX",
+      "parent_desc": "flowIQ® 2101",
+      "operation_no": 40,
+      "phantom_bom": "5915529",
+      "component_part": "1980385",
+      "component_part_type": "Expense",
+      "component_desc": "Thermosealing Film ***Min. = 1200 m*** ",
+      "qty_per_assembly": 0.05,
+      "source": "Shop Order Materials - Config",
+      "basis_order": "25280152",
+      "evidence_orders": 1
+    }
+  },
+  "021XCXXXXXX_Config1743122": {
+    "total_rows": 103,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_part_type",
+      "component_desc",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": 1,
+      "parent_part": "021XCXXXXXX",
+      "parent_desc": "flowIQ® 2101",
+      "operation_no": 10,
+      "phantom_bom": "2100000800",
+      "component_part": "3024398",
+      "component_part_type": "Purchased (raw)",
+      "component_desc": "Snap ring seal Cold water",
+      "qty_per_assembly": 1,
+      "source": "Shop Order Materials - Config",
+      "basis_order": "25328951",
+      "evidence_orders": 1
+    }
+  },
+  "021XCXXXXXX_Config2068624": {
+    "total_rows": 103,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_part_type",
+      "component_desc",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": 1,
+      "parent_part": "021XCXXXXXX",
+      "parent_desc": "flowIQ® 2101",
+      "operation_no": 40,
+      "phantom_bom": "5915529",
+      "component_part": "1980385",
+      "component_part_type": "Unknown",
+      "component_desc": "Thermosealing Film ***Min. = 1200 m*** ",
+      "qty_per_assembly": 0.15,
+      "source": "Shop Order Materials - Config",
+      "basis_order": 25349431,
+      "evidence_orders": 1
+    }
+  },
+  "021XCXXXXXX_Config2068625": {
+    "total_rows": 103,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_part_type",
+      "component_desc",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": 1,
+      "parent_part": "021XCXXXXXX",
+      "parent_desc": "flowIQ® 2101",
+      "operation_no": 40,
+      "phantom_bom": "5915529",
+      "component_part": "1980385",
+      "component_part_type": "Unknown",
+      "component_desc": "Thermosealing Film ***Min. = 1200 m*** ",
+      "qty_per_assembly": 0.15,
+      "source": "Shop Order Materials - Config",
+      "basis_order": 25349431,
+      "evidence_orders": 1
+    }
+  },
+  "021XCXXXXXX_Config2068626": {
+    "total_rows": 103,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_part_type",
+      "component_desc",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": 1,
+      "parent_part": "021XCXXXXXX",
+      "parent_desc": "flowIQ® 2101",
+      "operation_no": 40,
+      "phantom_bom": "5915529",
+      "component_part": "1980385",
+      "component_part_type": "Expense",
+      "component_desc": "Thermosealing Film ***Min. = 1200 m*** ",
+      "qty_per_assembly": 0.15,
+      "source": "Shop Order Materials - Config",
+      "basis_order": "25349431",
+      "evidence_orders": 3
+    }
+  },
+  "021XCXXXXXX_Config2084356": {
+    "total_rows": 104,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_part_type",
+      "component_desc",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": 1,
+      "parent_part": "021XCXXXXXX",
+      "parent_desc": "flowIQ® 2101",
+      "operation_no": 40,
+      "phantom_bom": "5915529",
+      "component_part": "1980385",
+      "component_part_type": "Expense",
+      "component_desc": "Thermosealing Film ***Min. = 1200 m*** ",
+      "qty_per_assembly": 0.15,
+      "source": "Shop Order Materials - Config",
+      "basis_order": "25353792",
+      "evidence_orders": 1
+    }
+  },
+  "021XCXXXXXX_Config2106660": {
+    "total_rows": 103,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_part_type",
+      "component_desc",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": 1,
+      "parent_part": "021XCXXXXXX",
+      "parent_desc": "flowIQ 2101",
+      "operation_no": "40",
+      "phantom_bom": "5915529",
+      "component_part": "1980385",
+      "component_part_type": "Expense",
+      "component_desc": "Thermosealing Film ***Min. = 1200 m*** ",
+      "qty_per_assembly": 0.15,
+      "source": "Shop Order Materials - Config",
+      "basis_order": "25356575",
+      "evidence_orders": 1
+    }
+  },
+  "021XCXXXXXX_Config2117004": {
+    "total_rows": 102,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_part_type",
+      "component_desc",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": 1,
+      "parent_part": "021XCXXXXXX",
+      "parent_desc": "flowIQ 2101",
+      "operation_no": "40",
+      "phantom_bom": "5915529",
+      "component_part": "1980385",
+      "component_part_type": "Expense",
+      "component_desc": "Thermosealing Film ***Min. = 1200 m*** ",
+      "qty_per_assembly": 0.15,
+      "source": "Shop Order Materials - Config",
+      "basis_order": "25358735",
+      "evidence_orders": 1
+    }
+  },
+  "021XCXXXXXX_Config2147506": {
+    "total_rows": 101,
+    "columns": [
+      "level",
+      "parent_part",
+      "parent_desc",
+      "operation_no",
+      "phantom_bom",
+      "component_part",
+      "component_part_type",
+      "component_desc",
+      "qty_per_assembly",
+      "source",
+      "basis_order",
+      "evidence_orders"
+    ],
+    "sample_row": {
+      "level": 1,
+      "parent_part": "021XCXXXXXX",
+      "parent_desc": "flowIQ 2101",
+      "operation_no": "40",
+      "phantom_bom": "5915529",
+      "component_part": "1980385",
+      "component_part_type": "Expense",
+      "component_desc": "Thermosealing Film ***Min. = 1200 m*** ",
+      "qty_per_assembly": 0.15,
+      "source": "Shop Order Materials - Config",
+      "basis_order": "25363779",
+      "evidence_orders": 1
+    }
+  }
+}
